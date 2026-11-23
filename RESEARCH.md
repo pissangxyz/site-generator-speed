@@ -63,3 +63,69 @@ Total reference ≈ 283–324 ms/case locally (≈ 920 ms for the set).
 Markdown ~3x faster (fused + chunked escaping + range inline), layouts ~3x faster
 (bytecode vs tree-walking interpreter), front matter ~2x. Total target ≈ 2.5–3x
 faster than the reference on the same machine.
+
+## v2 (2026-11-23) — chasing top 10
+
+v1 measured ~147 ms local (median, 10 iters) vs reference ~584–624 ms (~3.9x).
+Dev-phase top-10 cutoff is 360,000 µs; v1's server estimate (~407,000 µs) sits
+outside it. v2 target: clearly faster than v1, same byte-exact output.
+
+16. **First-char block dispatch** — CHOSEN (Stage A). `renderMarkdown`'s block loop
+    called the same regexes in sequence per line. Now the first char dispatches:
+    blank/space-tab → blank-or-paragraph, backtick → fence, `#` → heading,
+    `-`/`*` → HR then bullet, `>` → quote, digit → ordered, else paragraph.
+    Precedence preserved from the reference; `endsParagraph` and the
+    list/fence/quote inner loops dispatch the same way.
+17. **`wordsOf` counts word ends, not starts** — CHOSEN (Stage A). The v1 manual
+    scan counted word starts (inWord state per char). Counting a word end — a
+    whitespace char preceded by a non-whitespace char — plus one when the text
+    ends on a word char, with a printable-ASCII skip, is exact (verified against
+    `match(/\S+/g)` on all 1,070 practice bodies + edge cases incl. \v \f \u00a0
+    \u2003 \u2028 \u2029 \uFEFF surrogate pairs) and ~17% faster in isolation
+    (15.7 ms vs 18.9 ms on 2.77M chars).
+18. **`slugify` ASCII fast path** — CHOSEN (Stage A). ASCII normalises to itself
+    under NFKD and carries no combining marks, so a pre-scan loop that aborts on
+    the first non-ASCII char lets ASCII titles skip `normalize` + the `\p{M}`
+    regex entirely; non-ASCII falls back to the full path.
+19. **`resolvePath` fast path + precomputed `dirStr`** — CHOSEN (Stage A). When a
+    relative target has no `..` segment, no `.`-only segment, no `//` and no
+    trailing `/`, the resolved path is a plain concatenation; the source dir
+    string is precomputed once per source.
+20. **Stage A result** — ~130 ms local (mean of 3 rounds), ~14.5% faster than v1,
+    still 3/3 byte-exact.
+21. **`new Function` template compiler** — CHOSEN (Stage B), reversing v1's
+    rejection #12. Re-verified before adopting: no codegen/eval/`new Function`
+    ban anywhere in RULES.txt, competition.yaml, the scorer or the harness
+    (grep for eval / `new Function` / codegen came back empty). Each template
+    becomes a JS function `(__base, __vars, B, H, M)`; non-constant includes are
+    inlined at the call site (loop vars become plain JS locals, scope map with
+    save/restore, fresh temp names); constant templates (free names ⊆ {site,
+    tags, recent}, computed transitively with scope-aware analysis) are rendered
+    once per run and memoized in a per-run Map; `for` uses one mutated loop
+    object per loop (safe — templates only read it). The include graph must be
+    acyclic with longest chain ≤ 8, or the v1 bytecode engine (kept intact in
+    the file) is used as fallback; any codegen failure also falls back.
+22. **Stage B result** — ~118.7 ms local, ~9% over Stage A, ~22% over v1, 3/3
+    byte-exact. Template rendering fell from ~19% of profile to ~9.5%.
+23. **Inline no-specials fast path** — CHOSEN. `inlineStr` returns the text as-is
+    when it holds no character from `[\\` *\[&<>"']` (exact: inlineRange would
+    only push plain runs). Headings and blockquotes now go through `inlineStr`
+    too instead of calling `inlineRange` directly. Only ~21% of paragraphs hit
+    it (bodies are rich in emphasis/code/links), so the gain is modest.
+24. **Word-count fusion into `renderMarkdown`** — REJECTED after A/B. Counting
+    words per line from the already-split lines array is exact (1,070/1,070
+    bodies + edge cases vs the reference regex) but measured ~4% SLOWER than the
+    separate `wordsOf` pass: the per-line function-call overhead beats the cache
+    benefit on this machine. Kept the separate `wordsOf`.
+25. **Shared scratch buffers for `inlineStr`/`render`** — REJECTED. A/B showed no
+    measurable gain (within machine noise); not worth the reentrancy risk.
+    Reverted.
+26. **Lazy / reachable-only template compilation** — REJECTED. Only ~40% of the
+    compile cost is the `new Function` calls (the rest is the analysis the memo
+    logic needs anyway), and ~11 templates per case are unused decoys; the
+    saving would be ~0.5% of total. Not worth restructuring `run()`.
+27. **Final v2** — ~110.7 ms local (mean of 4 alternating A/B rounds, 10 iters
+    each) vs v1 ~146.7 ms: **~24.5% faster**, 3/3 byte-exact. Ratio vs reference
+    ~5.3x → server estimate ~300,000 µs, inside the 360,000 µs top-10 cutoff
+    with ~17% margin. Submitted as entry 2 only if `makefun check` and
+    `grade-local` pass (Force_Last replaces v1).
