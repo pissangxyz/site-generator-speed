@@ -127,5 +127,7 @@ outside it. v2 target: clearly faster than v1, same byte-exact output.
 27. **Final v2** — ~110.7 ms local (mean of 4 alternating A/B rounds, 10 iters
     each) vs v1 ~146.7 ms: **~24.5% faster**, 3/3 byte-exact. Ratio vs reference
     ~5.3x → server estimate ~300,000 µs, inside the 360,000 µs top-10 cutoff
-    with ~17% margin. Submitted as entry 2 only if `makefun check` and
-    `grade-local` pass (Force_Last replaces v1).
+    with ~17% margin. SUBMITTED as entry 2 (Force_Last replaces v1) 2026-11-23
+    15:30 WIB: submission 01a20787-271f-75b9-b87b-88c9a77e50f7 ("Elegant Atlas"),
+    commit e2799bc, checked, all validity checks pass, dev grading underway.
+    Entries close Wed 25 Nov 03:00 WIB; result due 9 Dec 20:00 WIB.
